@@ -137,8 +137,15 @@ async def handle_message(message: Message):
             timeout=15.0
         )
         ai_reply = response.choices[0].message.content.strip()
-        if len(ai_reply) > 500:
-            ai_reply = ai_reply[:497] + "..."
+        # Для простых вопросов — коротко
+        # Для сложных («объясни», «напиши код») — длиннее
+        if any(word in user_text.lower() for word in ["объясни", "опиши", "напиши код", "сделай", "как работает"]):
+            max_length = 1200
+        else:
+            max_length = 800
+
+        if len(ai_reply) > max_length:
+            ai_reply = ai_reply[:max_length - 3] + "..."
 
         thinking_task.cancel()
 
