@@ -103,6 +103,8 @@ async def handle_message(message: Message):
         
         await message.answer(ai_reply)
     except Exception as e:
+        import traceback
+        print("❌ ОШИБКА:", traceback.format_exc())  # ← ЭТО ПОЯВИТСЯ В ЛОГАХ RAILWAY
         await message.answer("⚠️ Временно не могу ответить.")
 
 dp.include_router(router)
