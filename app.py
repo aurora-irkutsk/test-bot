@@ -1,38 +1,41 @@
 import os
 import asyncio
+import traceback
+from collections import defaultdict, deque
 from aiohttp import web
 from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import Command
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
-from collections import defaultdict, deque  # ← ДОБАВЛЕНО
 
-# Хранилище истории диалогов: {chat_id: deque([msg1, msg2, ...])}
-chat_histories = defaultdict(lambda: deque(maxlen=6))  # ← ДОБАВЛЕНО
 
+# === Конфигурация ===
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "final-secret").strip()
-WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "https://aismartzenbot-smartzenbot.up.railway.app").strip()  # ← УБРАНЫ ПРОБЕЛЫ
+WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "https://aismartzenbot-smartzenbot.up.railway.app").strip()
 WEBHOOK_PATH = f"/webhook/{WEBHOOK_SECRET}"
 WEBHOOK_URL = f"{WEBHOOK_BASE_URL}{WEBHOOK_PATH}"
 
+# === Инициализация бота ===
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 
+# === Хранилище истории диалогов (макс. 6 сообщений на чат) ===
+chat_histories = defaultdict(lambda: deque(maxlen=6))
+
+
+# === Вспомогательные функции ===
 async def send_thinking_delayed(chat_id: int, bot: Bot):
-    """Отправляет 'печатает...' через 2.5 секунды, если ответ ещё не пришёл"""
+    """Отправляет действие 'печатает...' через 2.5 секунды, если ответ ещё не пришёл."""
     await asyncio.sleep(2.5)
     await bot.send_chat_action(chat_id=chat_id, action="typing")
 
-@router.message(lambda msg: msg.text == "🧹 Очистить контекст")  # ← ДОБАВЛЕНО
-async def clear_button(message: Message):
-    chat_histories.pop(message.chat.id, None)
-    await message.answer("🧠 Контекст очищен. О чём поговорим?")
 
+# === Обработчики сообщений ===
 @router.message(Command("start"))
 async def start(message: Message):
-    welcome_image_url = "https://github.com/aurora-irkutsk/AI_smartzenbot/raw/main/start.png  "  # ← УБРАНЫ ПРОБЕЛЫ
     kb = ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🧠 Что ты умеешь?")],
@@ -41,9 +44,9 @@ async def start(message: Message):
         resize_keyboard=True
     )
     await message.answer_photo(
-        photo=welcome_image_url,
+        photo="https://github.com/aurora-irkutsk/AI_smartzenbot/raw/main/start.png",
         caption=(
-            "🧠 Привет!\n\n" 
+            "🧠 Привет!\n\n"
             "Я Smart_Zen — ваш личный ассистент ❤️\n\n"
             "Отвечаю на вопросы, объясняю сложное простым языком, помогаю в учёбе и работе 🔥\n\n"
             "💡 Просто напишите свой запрос!\n\n"
@@ -51,6 +54,7 @@ async def start(message: Message):
         ),
         reply_markup=kb
     )
+
 
 @router.message(lambda msg: msg.text == "🧠 Что ты умеешь?")
 async def help_button(message: Message):
@@ -71,91 +75,105 @@ async def help_button(message: Message):
         parse_mode="HTML"
     )
 
+
+@router.message(lambda msg: msg.text == "🧹 Очистить контекст")
+async def clear_context(message: Message):
+    chat_histories.pop(message.chat.id, None)
+    await message.answer("🧠 Контекст очищен. О чём поговорим?")
+
+
 @router.message()
 async def handle_message(message: Message):
-    if not message.text:  # ← ИГНОРИРУЕМ НЕ ТЕКСТОВЫЕ СООБЩЕНИЯ
+    if not message.text:
         return
-    
-    # 🔥 ЗАПУСК "ДУМАЮ..." ЧЕРЕЗ 2.5 СЕК
-    thinking_task = asyncio.create_task(send_thinking_delayed(message.chat.id, bot))
-    
+
+    chat_id = message.chat.id
+    user_text = message.text.strip()
+
+    # Запуск индикатора "печатает..." с отменой при получении ответа или ошибке
+    thinking_task = asyncio.create_task(send_thinking_delayed(chat_id, bot))
+
     try:
-        from openai import OpenAI
-        import httpx  # ← ЕДИНСТВЕННЫЙ НОВЫЙ ИМПОРТ
-        
-        user_text = message.text.strip()
-        chat_id = message.chat.id
-        
-        # 🔥 ПРОВЕРКА ССЫЛКИ
+        # Обработка ссылок через Jina AI Reader
         if user_text.startswith(("http://", "https://")):
-            async with httpx.AsyncClient(timeout=20.0) as client_jina:
-                jina_response = await client_jina.get(f"https://r.jina.ai/  {user_text}")  # ← УБРАНЫ ПРОБЕЛЫ
+            import httpx
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                jina_url = f"https://r.jina.ai/{user_text}"
+                jina_response = await client.get(jina_url)
                 if jina_response.status_code == 200:
-                    article_content = jina_response.text
-                    # Формируем запрос для AI: "Кратко перескажи..."
-                    user_message = {"role": "user", "content": f"Кратко перескажи статью на 3–4 предложения:\n\n{article_content[:3000]}"}
+                    content = jina_response.text
+                    user_message = {
+                        "role": "user",
+                        "content": f"Кратко перескажи статью на 3–4 предложения:\n\n{content[:3000]}"
+                    }
                 else:
-                    thinking_task.cancel()  # ← ОТМЕНА "ДУМАЮ"
+                    thinking_task.cancel()
                     await message.answer("❌ Не удалось загрузить статью.")
                     return
         else:
             user_message = {"role": "user", "content": user_text}
-        
-        # ДАЛЬШЕ — ВСЁ КАК БЫЛО
+
+        # Формирование контекста
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "Ты — умный, знающий и вежливый помощник, никогда не используй китайские, японские или корейские иероглифы."
-                    "Никогда не упоминай, что ты искусственный интеллект, бот, программа или модель."
-                    "Не отвечай на вопросы о том, кто ты или как ты устроен."
-                    "Всегда отвечай на том языке, на котором к тебе обратился пользователь."
-                    "Если спросят — переадресуй вопрос на содержание запроса или ответь уклончиво."
-                    "Никогда не пиши вступления вроде «Конечно!» или «Вот ответ: отвечай всегда по делу."
+                    "Ты — умный, знающий и вежливый помощник, никогда не используй китайские, японские или корейские иероглифы. "
+                    "Никогда не упоминай, что ты искусственный интеллект, бот, программа или модель. "
+                    "Не отвечай на вопросы о том, кто ты или как ты устроен. "
+                    "Всегда отвечай на том языке, на котором к тебе обратился пользователь. "
+                    "Если спросят — переадресуй вопрос на содержание запроса или ответь уклончиво. "
+                    "Никогда не пиши вступления вроде «Конечно!» или «Вот ответ»: отвечай всегда по делу. "
                     "Если в запросе пользователя есть опечатки, орфографические или грамматические ошибки — "
-                    "исправь их мысленно и отвечай на правильный вопрос. "
+                    "исправь их мысленно и отвечай на правильный вопрос."
                 )
             }
         ]
         messages.extend(chat_histories[chat_id])
         messages.append(user_message)
-        
+
+        # Вызов модели через Groq
+        from openai import OpenAI
         client = OpenAI(
-            base_url="https://api.groq.com/openai/v1  ",  # ← УБРАНЫ ПРОБЕЛЫ
-            api_key=os.getenv("GROQ_API_KEY", "").strip()
+            base_url="https://api.groq.com/openai/v1",
+            api_key=GROQ_API_KEY
         )
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=messages,
-            timeout=15.0  # ← ТАЙМАУТ УМЕНЬШЕН ДО 15 СЕК
+            timeout=15.0
         )
         ai_reply = response.choices[0].message.content.strip()
-        
+
         if len(ai_reply) > 500:
             ai_reply = ai_reply[:497] + "..."
-        
-        # 🔥 ОТМЕНА "ДУМАЮ", ТАК КАК ОТВЕТ УЖЕ ЕСТЬ
+
+        # Отмена индикатора и отправка ответа
         thinking_task.cancel()
-        
         chat_histories[chat_id].append(user_message)
         chat_histories[chat_id].append({"role": "assistant", "content": ai_reply})
-        
         await message.answer(ai_reply)
+
     except Exception as e:
-        thinking_task.cancel()  # ← ОТМЕНА ПРИ ОШИБКЕ
-        import traceback
+        thinking_task.cancel()
         print("❌ ОШИБКА:", traceback.format_exc())
         await message.answer("⚠️ Временно не могу ответить.")
 
+
+# === Регистрация роутера ===
 dp.include_router(router)
 
+
+# === Вебхук и запуск сервера ===
 async def on_startup(app):
     print(f"✅ Устанавливаю webhook: {WEBHOOK_URL}")
     await bot.set_webhook(WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
 
+
 async def on_shutdown(app):
     await bot.delete_webhook()
     await bot.session.close()
+
 
 def main():
     app = web.Application()
@@ -163,6 +181,7 @@ def main():
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
     web.run_app(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+
 
 if __name__ == "__main__":
     main()
