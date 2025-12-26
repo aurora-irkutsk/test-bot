@@ -75,7 +75,10 @@ async def help_button(message: Message):
 async def handle_message(message: Message):
     if not message.text:  # ← ИГНОРИРУЕМ НЕ ТЕКСТОВЫЕ СООБЩЕНИЯ
         return
-    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    
+    # 🔥 ЗАПУСК "ДУМАЮ..." ЧЕРЕЗ 2.5 СЕК
+    thinking_task = asyncio.create_task(send_thinking_delayed(message.chat.id, bot))
+    
     try:
         from openai import OpenAI
         import httpx  # ← ЕДИНСТВЕННЫЙ НОВЫЙ ИМПОРТ
@@ -86,12 +89,13 @@ async def handle_message(message: Message):
         # 🔥 ПРОВЕРКА ССЫЛКИ
         if user_text.startswith(("http://", "https://")):
             async with httpx.AsyncClient(timeout=20.0) as client_jina:
-                jina_response = await client_jina.get(f"https://r.jina.ai/{user_text}")  # ← УБРАНЫ ПРОБЕЛЫ
+                jina_response = await client_jina.get(f"https://r.jina.ai/  {user_text}")  # ← УБРАНЫ ПРОБЕЛЫ
                 if jina_response.status_code == 200:
                     article_content = jina_response.text
                     # Формируем запрос для AI: "Кратко перескажи..."
                     user_message = {"role": "user", "content": f"Кратко перескажи статью на 3–4 предложения:\n\n{article_content[:3000]}"}
                 else:
+                    thinking_task.cancel()  # ← ОТМЕНА "ДУМАЮ"
                     await message.answer("❌ Не удалось загрузить статью.")
                     return
         else:
@@ -117,26 +121,30 @@ async def handle_message(message: Message):
         messages.append(user_message)
         
         client = OpenAI(
-            base_url="https://api.groq.com/openai/v1",  # ← УБРАНЫ ПРОБЕЛЫ
+            base_url="https://api.groq.com/openai/v1  ",  # ← УБРАНЫ ПРОБЕЛЫ
             api_key=os.getenv("GROQ_API_KEY", "").strip()
         )
         response = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=messages,
-            timeout=30.0
+            timeout=15.0  # ← ТАЙМАУТ УМЕНЬШЕН ДО 15 СЕК
         )
         ai_reply = response.choices[0].message.content.strip()
         
         if len(ai_reply) > 500:
             ai_reply = ai_reply[:497] + "..."
         
+        # 🔥 ОТМЕНА "ДУМАЮ", ТАК КАК ОТВЕТ УЖЕ ЕСТЬ
+        thinking_task.cancel()
+        
         chat_histories[chat_id].append(user_message)
         chat_histories[chat_id].append({"role": "assistant", "content": ai_reply})
         
         await message.answer(ai_reply)
     except Exception as e:
+        thinking_task.cancel()  # ← ОТМЕНА ПРИ ОШИБКЕ
         import traceback
-        print("❌ ОШИБКА:", traceback.format_exc())  # ← ЭТО ПОЯВИТСЯ В ЛОГАХ RAILWAY
+        print("❌ ОШИБКА:", traceback.format_exc())
         await message.answer("⚠️ Временно не могу ответить.")
 
 dp.include_router(router)
