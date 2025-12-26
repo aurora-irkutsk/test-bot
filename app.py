@@ -150,6 +150,14 @@ async def handle_message(message: Message):
 
         # Отмена индикатора и отправка ответа
         thinking_task.cancel()
+        
+        # === УМНАЯ ОБРЕЗКА ИСТОРИИ (ТОЛЬКО ЭТО ДОБАВЛЕНО) ===
+        total_length = sum(len(msg["content"]) for msg in chat_histories[chat_id])
+        while total_length > 2000:
+            removed = chat_histories[chat_id].popleft()
+            total_length -= len(removed["content"])
+        # =====================================================
+        
         chat_histories[chat_id].append(user_message)
         chat_histories[chat_id].append({"role": "assistant", "content": ai_reply})
         await message.answer(ai_reply)
