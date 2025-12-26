@@ -26,14 +26,13 @@ async def clear_button(message: Message):
 
 @router.message(Command("start"))
 async def start(message: Message):
-    welcome_image_url = "https://github.com/aurora-irkutsk/AI_smartzenbot/raw/main/start.png"  # ← УБРАНЫ ПРОБЕЛЫ
+    welcome_image_url = "https://github.com/aurora-irkutsk/AI_smartzenbot/raw/main/start.png  "  # ← УБРАНЫ ПРОБЕЛЫ
     kb = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🧠 Что ты умеешь?")],
-        [KeyboardButton(text="🧹 Очистить контекст")]
-    ],
-    resize_keyboard=True
-)
+        keyboard=[
+            [KeyboardButton(text="🧠 Что ты умеешь?")],
+            [KeyboardButton(text="🧹 Очистить контекст")]
+        ],
+        resize_keyboard=True
     )
     await message.answer_photo(
         photo=welcome_image_url,
