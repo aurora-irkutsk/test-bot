@@ -83,6 +83,10 @@ async def handle_message(message: Message):
         await message.answer(ai_reply)
         
     except Exception as e:
+        # 🔥 ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ
+        import traceback
+        error_msg = f"❌ ОШИБКА в чате {message.chat.id}:\n{traceback.format_exc()}"
+        print(error_msg)  # ← ЭТО ПОЯВИТСЯ В ЛОГАХ RAILWAY
         await message.answer("⚠️ Временно не могу ответить.")
 
 dp.include_router(router)
