@@ -1,6 +1,7 @@
 import os
 import asyncio
 import traceback
+import re
 from collections import defaultdict, deque
 from aiohttp import web
 from aiogram import Bot, Dispatcher, Router
@@ -43,17 +44,21 @@ async def start(message: Message):
         ],
         resize_keyboard=True
     )
-    await message.answer_photo(
-        photo="https://github.com/aurora-irkutsk/AI_smartzenbot/raw/main/start.png",
-        caption=(
-            "🧠 Привет!\n\n"
-            "Я Smart_Zen — ваш личный ассистент ❤️\n\n"
-            "Отвечаю на вопросы, объясняю сложное простым языком, помогаю в учёбе и работе 🔥\n\n"
-            "💡 Просто напишите свой запрос!\n\n"
-            "Например: Что ты умеешь? 🤷‍♂️"
-        ),
-        reply_markup=kb
-    )
+    # Персональное приветствие
+    if message.chat.id in chat_histories:
+        await message.answer("👋 С возвращением! Продолжим?", reply_markup=kb)
+    else:
+        await message.answer_photo(
+            photo="https://github.com/aurora-irkutsk/AI_smartzenbot/raw/main/start.png",
+            caption=(
+                "🧠 Привет!\n\n"
+                "Я Smart_Zen — ваш личный ассистент ❤️\n\n"
+                "Отвечаю на вопросы, объясняю сложное простым языком, помогаю в учёбе и работе 🔥\n\n"
+                "💡 Просто напишите свой запрос!\n\n"
+                "Например: Что ты умеешь? 🤷‍♂️"
+            ),
+            reply_markup=kb
+        )
 
 
 @router.message(lambda msg: msg.text == "🧠 Что ты умеешь?")
@@ -95,7 +100,36 @@ async def handle_message(message: Message):
 
     try:
         # Обработка ссылок через Jina AI Reader
-        if user_text.startswith(("http://", "https://")):
+        # Умное распознавание ссылок (с www и без)
+url_pattern = re.compile(r'(https?://\S+|www\.\S+|\S+\.\S+/\S*)')
+urls = url_pattern.findall(user_text)
+if urls:
+    # Берём первую найденную ссылку
+    raw_url = urls[0]
+    # Добавляем https:// если нужно
+    if raw_url.startswith("www."):
+        url = "https://" + raw_url
+    elif not raw_url.startswith("http"):
+        url = "https://" + raw_url
+    else:
+        url = raw_url
+        
+    import httpx
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        jina_url = f"https://r.jina.ai/{url}"
+        jina_response = await client.get(jina_url)
+        if jina_response.status_code == 200:
+            content = jina_response.text
+            user_message = {
+                "role": "user",
+                "content": f"Кратко перескажи статью на 3–4 предложения:\n\n{content[:3000]}"
+            }
+        else:
+            thinking_task.cancel()
+            await message.answer("❌ Не удалось загрузить статью.")
+            return
+else:
+    user_message = {"role": "user", "content": user_text}
             import httpx
             async with httpx.AsyncClient(timeout=20.0) as client:
                 jina_url = f"https://r.jina.ai/{user_text}"
@@ -125,7 +159,9 @@ async def handle_message(message: Message):
                     "Если спросят — переадресуй вопрос на содержание запроса или ответь уклончиво. "
                     "Никогда не пиши вступления вроде «Конечно!» или «Вот ответ»: отвечай всегда по делу. "
                     "Если в запросе пользователя есть опечатки, орфографические или грамматические ошибки — "
-                    "исправь их мысленно и отвечай на правильный вопрос."
+                    "исправь их мысленно и отвечай на правильный вопрос. "
+                    "Если запрос состоит из одной фразы вроде «ну?», «и?», «что дальше?» или «ещё» — "
+                    "продолжи предыдущую мысль или мягко уточни, что именно нужно."
                 )
             }
         ]
