@@ -45,6 +45,8 @@ async def start(message: Message):
 
 @router.message()
 async def handle_message(message: Message):
+    if not message.text:  # ← ИГНОРИРУЕМ НЕ ТЕКСТОВЫЕ СООБЩЕНИЯ
+        return
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     try:
         from openai import OpenAI
@@ -56,7 +58,7 @@ async def handle_message(message: Message):
         # 🔥 ПРОВЕРКА ССЫЛКИ
         if user_text.startswith(("http://", "https://")):
             async with httpx.AsyncClient(timeout=20.0) as client_jina:
-                jina_response = await client_jina.get(f"https://r.jina.ai/  {user_text}")
+                jina_response = await client_jina.get(f"https://r.jina.ai/{user_text}")  # ← УБРАНЫ ПРОБЕЛЫ
                 if jina_response.status_code == 200:
                     article_content = jina_response.text
                     # Формируем запрос для AI: "Кратко перескажи..."
@@ -85,7 +87,7 @@ async def handle_message(message: Message):
         messages.append(user_message)
         
         client = OpenAI(
-            base_url="https://api.groq.com/openai/v1  ",
+            base_url="https://api.groq.com/openai/v1",  # ← УБРАНЫ ПРОБЕЛЫ
             api_key=os.getenv("GROQ_API_KEY", "").strip()
         )
         response = client.chat.completions.create(
